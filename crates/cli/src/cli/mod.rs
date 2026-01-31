@@ -263,6 +263,18 @@ pub struct StartSimnet {
     /// Skip signature verification for all transactions (eg. surfpool start --skip-signature-verification)
     #[clap(long = "skip-signature-verification", action=ArgAction::SetTrue, default_value = "false")]
     pub skip_signature_verification: bool,
+    /// Load a BPF program at startup (eg. surfpool start --bpf-program ADDRESS /path/to/program.so).
+    /// Can be specified multiple times.
+    #[arg(long = "bpf-program", num_args = 2, value_names = ["ADDRESS", "PROGRAM_SO_PATH"])]
+    pub bpf_programs: Vec<String>,
+    /// Load accounts from a directory of JSON files at startup (solana-test-validator format).
+    /// (eg. surfpool start --account-dir ./accounts/)
+    #[arg(long = "account-dir")]
+    pub account_dirs: Vec<String>,
+    /// Load a single account from a JSON file at startup (solana-test-validator format).
+    /// (eg. surfpool start --account ADDRESS /path/to/account.json)
+    #[arg(long = "account", num_args = 2, value_names = ["ADDRESS", "FILENAME"])]
+    pub preload_accounts: Vec<String>,
 }
 
 fn parse_svm_feature(s: &str) -> Result<SvmFeature, String> {
@@ -404,6 +416,12 @@ impl StartSimnet {
             None
         };
 
+        let bpf_programs: Vec<(String, PathBuf)> = self
+            .bpf_programs
+            .chunks(2)
+            .map(|chunk| (chunk[0].clone(), PathBuf::from(&chunk[1])))
+            .collect();
+
         SimnetConfig {
             remote_rpc_url,
             slot_time: self.slot_time,
@@ -423,6 +441,7 @@ impl StartSimnet {
             skip_signature_verification: self.skip_signature_verification,
             surfnet_id: self.surfnet_id.clone(),
             snapshot,
+            bpf_programs,
         }
     }
 
