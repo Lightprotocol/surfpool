@@ -3262,11 +3262,11 @@ impl SurfnetSvmLocker {
     pub fn subscribe_for_program_updates(
         &self,
         program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
         encoding: Option<UiAccountEncoding>,
-        filters: Option<Vec<RpcFilterType>>,
     ) -> Receiver<RpcKeyedAccount> {
         self.with_svm_writer(|svm_writer| {
-            svm_writer.subscribe_for_program_updates(program_id, encoding, filters)
+            svm_writer.subscribe_for_program_updates(program_id, filters, encoding)
         })
     }
 

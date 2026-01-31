@@ -156,6 +156,15 @@ pub type LogsSubscriptionData = (
 
 pub type SnapshotSubscriptionData = Sender<SnapshotImportNotification>;
 
+#[derive(Clone)]
+pub struct ProgramSubscription {
+    pub filters: Vec<RpcFilterType>,
+    pub encoding: Option<UiAccountEncoding>,
+    pub tx: Sender<RpcKeyedAccount>,
+}
+
+pub type ProgramSubscriptionData = HashMap<Pubkey, Vec<ProgramSubscription>>;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotImportNotification {
     pub snapshot_id: String,

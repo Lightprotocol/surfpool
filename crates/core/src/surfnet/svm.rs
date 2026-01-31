@@ -90,8 +90,8 @@ use uuid::Uuid;
 use super::{
     AccountSubscriptionData, BlockHeader, BlockIdentifier, FINALIZATION_SLOT_THRESHOLD,
     GetAccountResult, GeyserBlockMetadata, GeyserEntryInfo, GeyserEvent, GeyserSlotStatus,
-    ProgramSubscriptionData, SLOTS_PER_EPOCH, SignatureSubscriptionData, SignatureSubscriptionType,
-    remote::SurfnetRemoteClient,
+    ProgramSubscription, ProgramSubscriptionData, SLOTS_PER_EPOCH, SignatureSubscriptionData,
+    SignatureSubscriptionType, remote::SurfnetRemoteClient,
 };
 use crate::{
     error::{SurfpoolError, SurfpoolResult},
@@ -396,7 +396,7 @@ impl SurfnetSvm {
 
             signature_subscriptions: self.signature_subscriptions.clone(),
             account_subscriptions: self.account_subscriptions.clone(),
-            program_subscriptions: self.program_subscriptions.clone(),
+            program_subscriptions: HashMap::new(),
             // Don't clone subscriptions - profiling clone shouldn't send notifications
             slot_subscriptions: Vec::new(),
             logs_subscriptions: Vec::new(),
@@ -1267,7 +1267,7 @@ impl SurfnetSvm {
     /// Loads a BPF program into LiteSVM's execution cache from raw bytes.
     /// Unlike `set_account`, this registers the program so it can be invoked by transactions.
     pub fn add_program(&mut self, program_id: &Pubkey, program_bytes: &[u8]) -> SurfpoolResult<()> {
-        self.inner.add_program(*program_id, program_bytes)
+        self.inner.add_program(program_id, program_bytes)
     }
 
     /// Loads a BPF program into LiteSVM's execution cache from a .so file.
@@ -1277,7 +1277,7 @@ impl SurfnetSvm {
         program_id: &Pubkey,
         path: impl AsRef<std::path::Path>,
     ) -> SurfpoolResult<()> {
-        self.inner.add_program_from_file(*program_id, path)
+        self.inner.add_program_from_file(program_id, path)
     }
 
     /// Sets an account in the local SVM state and notifies listeners.
@@ -2012,11 +2012,17 @@ impl SurfnetSvm {
         let (confirmed_signatures, all_mutated_account_keys) = self.confirm_transactions()?;
         let write_version = self.increment_write_version();
 
-        // Notify Geyser plugin of account updates
+        // Notify Geyser plugin and WebSocket subscribers of account updates
         for pubkey in all_mutated_account_keys {
             let Some(account) = self.inner.get_account(&pubkey)? else {
                 continue;
             };
+
+            // Notify WebSocket account and program subscribers
+            let account_owned: Account = account.clone().into();
+            self.notify_account_subscribers(&pubkey, &account_owned);
+            self.notify_program_subscribers(&pubkey, &account_owned);
+
             self.geyser_events_tx
                 .send(GeyserEvent::UpdateAccount(
                     GeyserAccountUpdate::block_update(pubkey, account, slot, write_version),
@@ -2525,14 +2531,18 @@ impl SurfnetSvm {
     pub fn subscribe_for_program_updates(
         &mut self,
         program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
         encoding: Option<UiAccountEncoding>,
-        filters: Option<Vec<RpcFilterType>>,
     ) -> Receiver<RpcKeyedAccount> {
         let (tx, rx) = unbounded();
         self.program_subscriptions
             .entry(*program_id)
             .or_default()
-            .push((encoding, filters, tx));
+            .push(ProgramSubscription {
+                filters,
+                encoding,
+                tx,
+            });
         rx
     }
 
@@ -2597,45 +2607,56 @@ impl SurfnetSvm {
         }
     }
 
-    pub fn notify_program_subscribers(&mut self, account_pubkey: &Pubkey, account: &Account) {
-        let program_id = account.owner;
+    /// Notifies program subscribers when an account owned by the subscribed program changes.
+    pub fn notify_program_subscribers<T: ReadableAccount>(
+        &mut self,
+        account_pubkey: &Pubkey,
+        account: &T,
+    ) {
+        let owner = *account.owner();
         let mut remaining = vec![];
-        if let Some(subscriptions) = self.program_subscriptions.remove(&program_id) {
-            for (encoding, filters, tx) in subscriptions {
-                // Apply filters if present
-                if let Some(ref active_filters) = filters {
-                    match super::locker::apply_rpc_filters(&account.data, active_filters) {
-                        Ok(true) => {} // Account matches all filters
-                        Ok(false) => {
-                            // Filtered out - keep subscription active but don't notify
-                            remaining.push((encoding, filters, tx));
-                            continue;
-                        }
-                        Err(_) => {
-                            // Error applying filter - keep subscription, skip notification
-                            remaining.push((encoding, filters, tx));
-                            continue;
-                        }
+        if let Some(subscriptions) = self.program_subscriptions.remove(&owner) {
+            for sub in subscriptions {
+                let matches = Self::matches_program_filters(account.data(), &sub.filters);
+                if matches {
+                    let config = RpcAccountInfoConfig {
+                        encoding: sub.encoding,
+                        ..Default::default()
+                    };
+                    let keyed_account =
+                        self.account_to_rpc_keyed_account(account_pubkey, account, &config, None);
+                    if sub.tx.send(keyed_account).is_err() {
+                        // Receiver dropped, remove this subscription
+                        continue;
                     }
                 }
-
-                let config = RpcAccountInfoConfig {
-                    encoding,
-                    ..Default::default()
-                };
-                let keyed_account =
-                    self.account_to_rpc_keyed_account(account_pubkey, account, &config, None);
-                if tx.send(keyed_account).is_err() {
-                    // The receiver has been dropped, so we can skip notifying
-                    continue;
-                } else {
-                    remaining.push((encoding, filters, tx));
-                }
+                remaining.push(sub);
             }
             if !remaining.is_empty() {
-                self.program_subscriptions.insert(program_id, remaining);
+                self.program_subscriptions.insert(owner, remaining);
             }
         }
+    }
+
+    fn matches_program_filters(account_data: &[u8], filters: &[RpcFilterType]) -> bool {
+        for filter in filters {
+            match filter {
+                RpcFilterType::DataSize(size) => {
+                    if account_data.len() as u64 != *size {
+                        return false;
+                    }
+                }
+                RpcFilterType::Memcmp(memcmp_filter) => {
+                    if !memcmp_filter.bytes_match(account_data) {
+                        return false;
+                    }
+                }
+                RpcFilterType::TokenAccountState => {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Retrieves a confirmed block at the given slot, including transactions and metadata.

@@ -61,9 +61,9 @@ pub struct RpcAccountSubscribeConfig {
     pub encoding: Option<UiAccountEncoding>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RpcProgramSubscribeConfig {
+pub struct RpcProgramAccountsSubscribeConfig {
     #[serde(flatten)]
     pub commitment: Option<CommitmentConfig>,
     pub encoding: Option<UiAccountEncoding>,
@@ -694,8 +694,8 @@ pub trait Rpc {
         &self,
         meta: Self::Metadata,
         subscriber: Subscriber<RpcResponse<RpcKeyedAccount>>,
-        pubkey_str: String,
-        config: Option<RpcProgramSubscribeConfig>,
+        program_id_str: String,
+        config: Option<RpcProgramAccountsSubscribeConfig>,
     );
 
     /// Unsubscribe from program account change notifications.
@@ -1606,58 +1606,39 @@ impl Rpc for SurfpoolWsRpc {
         Ok(true)
     }
 
-    /// Implementation of program subscription for WebSocket clients.
-    ///
-    /// This method handles the complete lifecycle of program subscriptions:
-    /// 1. Validates the provided program public key string format
-    /// 2. Parses the subscription configuration (commitment, encoding, and filters)
-    /// 3. Generates a unique subscription ID and assigns it to the subscriber
-    /// 4. Spawns an async task to continuously monitor account changes for the program
-    /// 5. Sends notifications whenever an account owned by the program changes and matches filters
-    ///
-    /// # Monitoring Loop
-    /// The spawned task runs a continuous loop that:
-    /// - Checks if the subscription is still active (not unsubscribed)
-    /// - Polls for program account updates from the SVM
-    /// - Applies configured filters (dataSize, memcmp) before notifying
-    /// - Sends `RpcKeyedAccount` notifications (including account pubkey) to the subscriber
-    /// - Automatically terminates when the subscription is removed
-    ///
-    /// # Error Handling
-    /// - Rejects subscription with `InvalidParams` for malformed public keys
-    /// - Handles encoding configuration for account data serialization
-    /// - Manages subscription cleanup through the monitoring loop
-    ///
-    /// # Performance
-    /// Uses efficient polling with minimal CPU overhead and automatic
-    /// cleanup when subscriptions are no longer needed.
     fn program_subscribe(
         &self,
         meta: Self::Metadata,
         subscriber: Subscriber<RpcResponse<RpcKeyedAccount>>,
-        pubkey_str: String,
-        config: Option<RpcProgramSubscribeConfig>,
+        program_id_str: String,
+        config: Option<RpcProgramAccountsSubscribeConfig>,
     ) {
         let _ = meta
             .as_ref()
             .map(|m| m.log_debug("Websocket 'program_subscribe' connection established"));
 
-        let program_id = match Pubkey::from_str(&pubkey_str) {
+        let program_id = match Pubkey::from_str(&program_id_str) {
             Ok(pk) => pk,
             Err(_) => {
                 let error = Error {
                     code: ErrorCode::InvalidParams,
-                    message: "Invalid pubkey format.".into(),
+                    message: "Invalid program pubkey format.".into(),
                     data: None,
                 };
                 if subscriber.reject(error.clone()).is_err() {
-                    log::error!("Failed to reject subscriber for invalid pubkey format.");
+                    log::error!(
+                        "Failed to reject subscriber for invalid program pubkey format."
+                    );
                 }
                 return;
             }
         };
 
-        let config = config.unwrap_or_default();
+        let config = config.unwrap_or(RpcProgramAccountsSubscribeConfig {
+            commitment: None,
+            encoding: None,
+            filters: None,
+        });
 
         let id = self.uid.fetch_add(1, atomic::Ordering::SeqCst);
         let sub_id = SubscriptionId::Number(id as u64);
@@ -1685,6 +1666,13 @@ impl Rpc for SurfpoolWsRpc {
         };
         let slot = svm_locker.with_svm_reader(|svm| svm.get_latest_absolute_slot());
 
+        let filters = config.filters.unwrap_or_default();
+        let rx = svm_locker.subscribe_for_program_updates(
+            &program_id,
+            filters,
+            config.encoding,
+        );
+
         self.tokio_handle.spawn(async move {
             if let Ok(mut guard) = program_active.write() {
                 guard.insert(sub_id.clone(), sink);
@@ -1693,14 +1681,8 @@ impl Rpc for SurfpoolWsRpc {
                 return;
             }
 
-            let rx = svm_locker.subscribe_for_program_updates(
-                &program_id,
-                config.encoding,
-                config.filters,
-            );
-
             loop {
-                // if the subscription has been removed, break the loop
+                // If the subscription has been removed, break the loop
                 if let Ok(guard) = program_active.read() {
                     if guard.get(&sub_id).is_none() {
                         break;
@@ -1767,7 +1749,7 @@ impl Rpc for SurfpoolWsRpc {
                 message: "Internal error.".into(),
                 data: None,
             });
-        };
+        }
         Ok(true)
     }
 
