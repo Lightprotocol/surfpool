@@ -277,20 +277,20 @@ impl SurfnetLiteSvm {
         Ok(())
     }
 
-    pub fn add_program(&mut self, program_id: Pubkey, program_bytes: &[u8]) -> SurfpoolResult<()> {
+    pub fn add_program(&mut self, program_id: &Pubkey, program_bytes: &[u8]) -> SurfpoolResult<()> {
         self.svm
-            .add_program(program_id, program_bytes)
+            .add_program(*program_id, program_bytes)
             .map_err(SurfpoolError::from)?;
         Ok(())
     }
 
     pub fn add_program_from_file(
         &mut self,
-        program_id: Pubkey,
+        program_id: &Pubkey,
         path: impl AsRef<Path>,
     ) -> SurfpoolResult<()> {
         self.svm
-            .add_program_from_file(program_id, &path)
+            .add_program_from_file(*program_id, &path)
             .map_err(SurfpoolError::from)?;
         Ok(())
     }

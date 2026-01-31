@@ -256,6 +256,11 @@ pub struct StartSimnet {
     /// Can be specified multiple times.
     #[arg(long = "bpf-program", num_args = 2, value_names = ["ADDRESS", "PROGRAM_SO_PATH"])]
     pub bpf_programs: Vec<String>,
+    /// Load an upgradeable BPF program at startup with a proper BPF Upgradeable Loader account layout.
+    /// (eg. surfpool start --upgradeable-program ADDRESS /path/to/program.so UPGRADE_AUTHORITY)
+    /// Can be specified multiple times.
+    #[arg(long = "upgradeable-program", num_args = 3, value_names = ["ADDRESS", "PROGRAM_SO_PATH", "UPGRADE_AUTHORITY"])]
+    pub upgradeable_programs: Vec<String>,
     /// Load accounts from a directory of JSON files at startup (solana-test-validator format).
     /// (eg. surfpool start --account-dir ./accounts/)
     #[arg(long = "account-dir")]
@@ -407,8 +412,14 @@ impl StartSimnet {
 
         let bpf_programs: Vec<(String, PathBuf)> = self
             .bpf_programs
-            .chunks(2)
+            .chunks_exact(2)
             .map(|chunk| (chunk[0].clone(), PathBuf::from(&chunk[1])))
+            .collect();
+
+        let upgradeable_programs: Vec<(String, PathBuf, String)> = self
+            .upgradeable_programs
+            .chunks_exact(3)
+            .map(|chunk| (chunk[0].clone(), PathBuf::from(&chunk[1]), chunk[2].clone()))
             .collect();
 
         SimnetConfig {
@@ -431,6 +442,7 @@ impl StartSimnet {
             surfnet_id: self.surfnet_id.clone(),
             snapshot,
             bpf_programs,
+            upgradeable_programs,
         }
     }
 

@@ -624,6 +624,11 @@ pub struct SimnetConfig {
     pub snapshot: BTreeMap<String, Option<AccountSnapshot>>,
     /// BPF programs to load at startup. Each entry is (program_id_string, path_to_so_file).
     pub bpf_programs: Vec<(String, PathBuf)>,
+    /// Upgradeable BPF programs to load at startup.
+    /// Each entry is (program_id_string, path_to_so_file, upgrade_authority_string).
+    /// These programs get the full BPF upgradeable loader account layout
+    /// (program account + programdata account with upgrade authority).
+    pub upgradeable_programs: Vec<(String, PathBuf, String)>,
 }
 
 impl Default for SimnetConfig {
@@ -644,6 +649,7 @@ impl Default for SimnetConfig {
             surfnet_id: "default".to_string(),
             snapshot: BTreeMap::new(),
             bpf_programs: Vec::new(),
+            upgradeable_programs: Vec::new(),
         }
     }
 }

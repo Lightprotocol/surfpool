@@ -5,7 +5,11 @@ use jsonrpc_core::Result as RpcError;
 use locker::SurfnetSvmLocker;
 use solana_account::Account;
 use solana_account_decoder::{UiAccount, UiAccountEncoding};
-use solana_client::{rpc_config::RpcTransactionLogsFilter, rpc_response::RpcLogsResponse};
+use solana_client::{
+    rpc_config::RpcTransactionLogsFilter,
+    rpc_filter::RpcFilterType,
+    rpc_response::{RpcKeyedAccount, RpcLogsResponse},
+};
 use solana_clock::Slot;
 use solana_commitment_config::CommitmentLevel;
 use solana_epoch_info::EpochInfo;
@@ -142,6 +146,15 @@ pub type LogsSubscriptionData = (
 );
 
 pub type SnapshotSubscriptionData = Sender<SnapshotImportNotification>;
+
+#[derive(Clone)]
+pub struct ProgramSubscription {
+    pub filters: Vec<RpcFilterType>,
+    pub encoding: Option<UiAccountEncoding>,
+    pub tx: Sender<RpcKeyedAccount>,
+}
+
+pub type ProgramSubscriptionData = HashMap<Pubkey, Vec<ProgramSubscription>>;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SnapshotImportNotification {

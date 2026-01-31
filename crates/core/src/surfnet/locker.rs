@@ -69,7 +69,7 @@ use crate::{
     error::{SurfpoolError, SurfpoolResult},
     helpers::time_travel::calculate_time_travel_clock,
     rpc::utils::{convert_transaction_metadata_from_canonical, verify_pubkey},
-    surfnet::FINALIZATION_SLOT_THRESHOLD,
+    surfnet::{FINALIZATION_SLOT_THRESHOLD, SLOTS_PER_EPOCH},
     types::{
         GeyserAccountUpdate, RemoteRpcResult, SurfnetTransactionStatus, TimeTravelConfig,
         TokenAccount, TransactionLoadedAddresses, TransactionWithStatusMeta,
@@ -221,7 +221,7 @@ impl SurfnetSvmLocker {
             EpochInfo {
                 epoch: 0,
                 slot_index: 0,
-                slots_in_epoch: 0,
+                slots_in_epoch: SLOTS_PER_EPOCH,
                 absolute_slot: FINALIZATION_SLOT_THRESHOLD,
                 block_height: FINALIZATION_SLOT_THRESHOLD,
                 transaction_count: None,
@@ -3175,6 +3175,18 @@ impl SurfnetSvmLocker {
         // Handles the locking/unlocking safely
         self.with_svm_writer(|svm_writer| {
             svm_writer.subscribe_for_account_updates(account_pubkey, encoding)
+        })
+    }
+
+    /// Subscribes for program account updates and returns a receiver of keyed account updates.
+    pub fn subscribe_for_program_updates(
+        &self,
+        program_id: &Pubkey,
+        filters: Vec<RpcFilterType>,
+        encoding: Option<UiAccountEncoding>,
+    ) -> Receiver<RpcKeyedAccount> {
+        self.with_svm_writer(|svm_writer| {
+            svm_writer.subscribe_for_program_updates(program_id, filters, encoding)
         })
     }
 

@@ -117,99 +117,57 @@ pub async fn handle_start_local_surfnet_command(
 
     // Parse --account-dir directories and --account files (solana-test-validator JSON format)
     // and merge them into the snapshot
-    {
-        let parse_solana_account_json =
-            |content: &str,
-             file_path: &str|
-             -> Result<(String, surfpool_types::AccountSnapshot), String> {
-                let json: serde_json::Value = serde_json::from_str(content).map_err(|e| {
-                    format!("Failed to parse account JSON '{}': {}", file_path, e)
-                })?;
 
-                let pubkey = json["pubkey"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        format!("Missing 'pubkey' field in account file '{}'", file_path)
-                    })?
-                    .to_string();
+    // Process --account-dir directories
+    for dir_path in &cmd.account_dirs {
+        let dir = std::path::Path::new(dir_path);
+        if !dir.is_dir() {
+            return Err(format!("Account directory '{}' does not exist or is not a directory", dir_path).into());
+        }
+        let entries = std::fs::read_dir(dir)
+            .map_err(|e| format!("Failed to read account directory '{}': {}", dir_path, e))?;
 
-                let account = &json["account"];
-                let lamports = account["lamports"].as_u64().ok_or_else(|| {
-                    format!("Missing 'account.lamports' in '{}'", file_path)
-                })?;
-                let owner = account["owner"]
-                    .as_str()
-                    .ok_or_else(|| format!("Missing 'account.owner' in '{}'", file_path))?
-                    .to_string();
-                let executable = account["executable"].as_bool().unwrap_or(false);
-                let rent_epoch = account["rentEpoch"].as_u64().unwrap_or(0);
-
-                // data is [base64_string, "base64"]
-                let data_array = account["data"]
-                    .as_array()
-                    .ok_or_else(|| format!("Missing 'account.data' array in '{}'", file_path))?;
-                let data_base64 = data_array[0].as_str().ok_or_else(|| {
-                    format!("Invalid 'account.data[0]' in '{}'", file_path)
-                })?;
-
-                Ok((
-                    pubkey,
-                    surfpool_types::AccountSnapshot::new(
-                        lamports,
-                        owner,
-                        executable,
-                        rent_epoch,
-                        data_base64.to_string(),
-                        None,
-                    ),
-                ))
-            };
-
-        // Process --account-dir directories
-        for dir_path in &cmd.account_dirs {
-            let dir = std::path::Path::new(dir_path);
-            if !dir.is_dir() {
-                return Err(format!("Account directory '{}' does not exist or is not a directory", dir_path).into());
+        let mut count = 0;
+        for entry in entries {
+            let entry = entry
+                .map_err(|e| format!("Failed to read directory entry in '{}': {}", dir_path, e))?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
             }
-            let entries = std::fs::read_dir(dir)
-                .map_err(|e| format!("Failed to read account directory '{}': {}", dir_path, e))?;
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read account file '{}': {}", path.display(), e))?;
+            let (pubkey, account_snapshot) =
+                parse_solana_account_json(&content, &path.display().to_string())?;
+            snapshot.insert(pubkey, Some(account_snapshot));
+            count += 1;
+        }
+        let _ = simnet_events_tx.send(SimnetEvent::info(format!(
+            "Loaded {} accounts from directory: {}",
+            count, dir_path
+        )));
+    }
 
-            let mut count = 0;
-            for entry in entries {
-                let entry = entry
-                    .map_err(|e| format!("Failed to read directory entry in '{}': {}", dir_path, e))?;
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                    continue;
-                }
-                let content = std::fs::read_to_string(&path)
-                    .map_err(|e| format!("Failed to read account file '{}': {}", path.display(), e))?;
-                let (pubkey, account_snapshot) =
-                    parse_solana_account_json(&content, &path.display().to_string())?;
-                snapshot.insert(pubkey, Some(account_snapshot));
-                count += 1;
-            }
-            let _ = simnet_events_tx.send(SimnetEvent::info(format!(
-                "Loaded {} accounts from directory: {}",
-                count, dir_path
+    // Process --account ADDRESS FILENAME pairs
+    for chunk in cmd.preload_accounts.chunks_exact(2) {
+        let address = &chunk[0];
+        let file_path = &chunk[1];
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read account file '{}': {}", file_path, e))?;
+        let (json_pubkey, account_snapshot) =
+            parse_solana_account_json(&content, file_path)?;
+        if json_pubkey != *address {
+            let _ = simnet_events_tx.send(SimnetEvent::warn(format!(
+                "Account file '{}' contains pubkey '{}' but CLI address '{}' will be used",
+                file_path, json_pubkey, address
             )));
         }
-
-        // Process --account ADDRESS FILENAME pairs
-        for chunk in cmd.preload_accounts.chunks(2) {
-            let address = &chunk[0];
-            let file_path = &chunk[1];
-            let content = std::fs::read_to_string(file_path)
-                .map_err(|e| format!("Failed to read account file '{}': {}", file_path, e))?;
-            let (_pubkey, account_snapshot) =
-                parse_solana_account_json(&content, file_path)?;
-            // Use the address from the CLI flag, not from the JSON file
-            snapshot.insert(address.clone(), Some(account_snapshot));
-            let _ = simnet_events_tx.send(SimnetEvent::info(format!(
-                "Loaded account {} from file: {}",
-                address, file_path
-            )));
-        }
+        // Use the address from the CLI flag, not from the JSON file
+        snapshot.insert(address.clone(), Some(account_snapshot));
+        let _ = simnet_events_tx.send(SimnetEvent::info(format!(
+            "Loaded account {} from file: {}",
+            address, file_path
+        )));
     }
 
     // Build config
@@ -813,4 +771,51 @@ fn assemble_runbook_execution_futures(
         }
     }
     futures
+}
+
+fn parse_solana_account_json(
+    content: &str,
+    file_path: &str,
+) -> Result<(String, surfpool_types::AccountSnapshot), String> {
+    let json: serde_json::Value = serde_json::from_str(content).map_err(|e| {
+        format!("Failed to parse account JSON '{}': {}", file_path, e)
+    })?;
+
+    let pubkey = json["pubkey"]
+        .as_str()
+        .ok_or_else(|| {
+            format!("Missing 'pubkey' field in account file '{}'", file_path)
+        })?
+        .to_string();
+
+    let account = &json["account"];
+    let lamports = account["lamports"].as_u64().ok_or_else(|| {
+        format!("Missing 'account.lamports' in '{}'", file_path)
+    })?;
+    let owner = account["owner"]
+        .as_str()
+        .ok_or_else(|| format!("Missing 'account.owner' in '{}'", file_path))?
+        .to_string();
+    let executable = account["executable"].as_bool().unwrap_or(false);
+    let rent_epoch = account["rentEpoch"].as_u64().unwrap_or(0);
+
+    // data is [base64_string, "base64"]
+    let data_array = account["data"]
+        .as_array()
+        .ok_or_else(|| format!("Missing 'account.data' array in '{}'", file_path))?;
+    let data_base64 = data_array[0].as_str().ok_or_else(|| {
+        format!("Invalid 'account.data[0]' in '{}'", file_path)
+    })?;
+
+    Ok((
+        pubkey,
+        surfpool_types::AccountSnapshot::new(
+            lamports,
+            owner,
+            executable,
+            rent_epoch,
+            data_base64.to_string(),
+            None,
+        ),
+    ))
 }

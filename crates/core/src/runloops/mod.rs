@@ -137,6 +137,72 @@ pub async fn start_local_surfnet_runloop(
         });
     }
 
+    // Load upgradeable BPF programs specified via --upgradeable-program
+    // Uses add_program_from_file for execution cache, then creates a mock
+    // programdata account with the upgrade authority (same pattern as light-program-test).
+    for (program_id_str, path, upgrade_authority_str) in &simnet.upgradeable_programs {
+        let program_id = solana_pubkey::Pubkey::from_str(program_id_str).map_err(|e| {
+            format!("Invalid program pubkey '{}': {}", program_id_str, e)
+        })?;
+        let upgrade_authority =
+            solana_pubkey::Pubkey::from_str(upgrade_authority_str).map_err(|e| {
+                format!(
+                    "Invalid upgrade authority pubkey '{}': {}",
+                    upgrade_authority_str, e
+                )
+            })?;
+
+        // Register program in LiteSVM's execution cache
+        svm_locker
+            .add_program_from_file(&program_id, path)
+            .map_err(|e| {
+                format!(
+                    "Failed to load program '{}' from '{}': {}",
+                    program_id_str,
+                    path.display(),
+                    e
+                )
+            })?;
+
+        // Create mock programdata account so programs can verify upgrade authority.
+        // The programdata PDA is derived from the program ID.
+        let programdata_address =
+            solana_loader_v3_interface::get_program_data_address(&program_id);
+        let programdata_state =
+            solana_loader_v3_interface::state::UpgradeableLoaderState::ProgramData {
+                slot: svm_locker.get_latest_absolute_slot(),
+                upgrade_authority_address: Some(upgrade_authority),
+            };
+        let programdata_data = bincode::serialize(&programdata_state)
+            .expect("Failed to serialize UpgradeableLoaderState::ProgramData");
+
+        svm_locker.with_svm_writer(|svm| {
+            let lamports = svm
+                .inner
+                .minimum_balance_for_rent_exemption(programdata_data.len());
+            svm.set_account(
+                &programdata_address,
+                solana_account::Account {
+                    lamports,
+                    data: programdata_data.clone(),
+                    owner: solana_sdk_ids::bpf_loader_upgradeable::id(),
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .expect("Failed to set programdata account");
+        });
+
+        let _ = svm_locker.with_svm_reader(|svm| {
+            svm.simnet_events_tx.send(SimnetEvent::info(format!(
+                "Loaded upgradeable program {} from {} (authority: {})",
+                program_id_str,
+                path.display(),
+                upgrade_authority_str
+            )))
+        });
+    }
+
     svm_locker.airdrop_pubkeys(simnet.airdrop_token_amount, &simnet.airdrop_addresses);
 
     // Load snapshot accounts if provided
@@ -1145,6 +1211,7 @@ async fn start_ws_rpc_server_runloop(
                     uid,
                     signature_subscription_map: Arc::new(RwLock::new(HashMap::new())),
                     account_subscription_map: Arc::new(RwLock::new(HashMap::new())),
+                    program_subscription_map: Arc::new(RwLock::new(HashMap::new())),
                     slot_subscription_map: Arc::new(RwLock::new(HashMap::new())),
                     logs_subscription_map: Arc::new(RwLock::new(HashMap::new())),
                     snapshot_subscription_map: Arc::new(RwLock::new(HashMap::new())),
