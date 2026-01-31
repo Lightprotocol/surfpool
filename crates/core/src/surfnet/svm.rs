@@ -1061,13 +1061,23 @@ impl SurfnetSvm {
         let recent_blockhashes = RecentBlockhashes::from_iter(recent_blockhashes_vec);
         self.inner.set_sysvar(&recent_blockhashes);
 
-        // 2. Reconstruct SlotHashes - maps absolute slots to blockhashes
+        // 2. Reconstruct SlotHashes - maps absolute slots to blockhashes.
+        //    Extend the range down to slot 0 so that getSlot('finalized') always
+        //    returns a slot present in SlotHashes (finalized = absolute - 31,
+        //    which can be below genesis_slot early in the chain's life).
         let start_absolute_slot = start_index + self.genesis_slot;
-        let slot_hashes_vec: Vec<_> = (start_absolute_slot..=current_absolute_slot)
+        let mut slot_hashes_vec: Vec<_> = (start_absolute_slot..=current_absolute_slot)
             .rev()
             .zip(synthetic_hashes.iter())
             .map(|(slot, hash)| (slot, *hash.hash()))
             .collect();
+        // Fill slots below genesis_slot down to 0 with synthetic hashes so that
+        // programs like AddressLookupTable can validate finalized slots.
+        if start_absolute_slot > 0 {
+            for slot in (0..start_absolute_slot).rev() {
+                slot_hashes_vec.push((slot, *SyntheticBlockhash::new(slot).hash()));
+            }
+        }
         let slot_hashes = SlotHashes::new(&slot_hashes_vec);
         self.inner.set_sysvar(&slot_hashes);
 
