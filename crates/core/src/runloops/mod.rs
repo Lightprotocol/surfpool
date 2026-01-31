@@ -120,21 +120,53 @@ pub async fn start_local_surfnet_runloop(
                 program_id_str, e
             )
         })?;
-        svm_locker.add_program_from_file(&program_id, path).map_err(|e| {
-            format!(
-                "Failed to load program '{}' from '{}': {}",
-                program_id_str,
-                path.display(),
-                e
-            )
-        })?;
-        let _ = svm_locker.with_svm_reader(|svm| {
-            svm.simnet_events_tx.send(SimnetEvent::info(format!(
-                "Loaded BPF program {} from {}",
-                program_id_str,
-                path.display()
-            )))
-        });
+        match svm_locker.add_program_from_file(&program_id, path) {
+            Ok(()) => {
+                let _ = svm_locker.with_svm_reader(|svm| {
+                    svm.simnet_events_tx.send(SimnetEvent::info(format!(
+                        "Loaded BPF program {} from {}",
+                        program_id_str,
+                        path.display()
+                    )))
+                });
+            }
+            Err(e) => {
+                // Fall back to loading as a raw account (the file may not be a valid ELF).
+                let data = std::fs::read(path).map_err(|io_err| {
+                    format!(
+                        "Failed to read program file '{}': {}",
+                        path.display(),
+                        io_err
+                    )
+                })?;
+                let account = solana_account::Account {
+                    lamports: 1_000_000_000,
+                    data,
+                    owner: solana_sdk_ids::bpf_loader::id(),
+                    executable: true,
+                    rent_epoch: 0,
+                };
+                svm_locker
+                    .with_svm_writer(|svm| svm.set_account(&program_id, account))
+                    .map_err(|e2| {
+                        format!(
+                            "Failed to load program '{}' from '{}': add_program failed ({}), set_account also failed ({})",
+                            program_id_str,
+                            path.display(),
+                            e,
+                            e2
+                        )
+                    })?;
+                let _ = svm_locker.with_svm_reader(|svm| {
+                    svm.simnet_events_tx.send(SimnetEvent::warn(format!(
+                        "Loaded program {} from {} as raw account (not a valid ELF: {})",
+                        program_id_str,
+                        path.display(),
+                        e
+                    )))
+                });
+            }
+        }
     }
 
     // Load upgradeable BPF programs specified via --upgradeable-program
