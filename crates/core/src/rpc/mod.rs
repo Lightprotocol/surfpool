@@ -147,22 +147,31 @@ impl Middleware<Option<RunloopContext>> for SurfpoolMiddleware {
         F: FnOnce(Request, Option<RunloopContext>) -> X + Send,
         X: Future<Output = Option<Response>> + Send + 'static,
     {
-        let Request::Single(jsonrpc_core::Call::MethodCall(ref method_call)) = request else {
-            let error = Response::from(
-                Error {
-                    code: ErrorCode::InvalidRequest,
-                    message: "Only method calls are supported".into(),
-                    data: None,
-                },
-                None,
-            );
-            warn!("Request rejected due to not being a single method call");
-
-            return Either::Left(Box::pin(async move { Some(error) }));
+        let method_name = match &request {
+            Request::Single(jsonrpc_core::Call::MethodCall(method_call)) => {
+                Some(method_call.method.clone())
+            }
+            Request::Batch(calls) => {
+                debug!("Processing batch request with {} calls", calls.len());
+                None
+            }
+            _ => {
+                let error = Response::from(
+                    Error {
+                        code: ErrorCode::InvalidRequest,
+                        message: "Only method calls are supported".into(),
+                        data: None,
+                    },
+                    None,
+                );
+                warn!("Request rejected due to not being a method call or batch");
+                return Either::Left(Box::pin(async move { Some(error) }));
+            }
         };
 
-        let method_name = method_call.method.clone();
-        debug!("Processing request '{}'", method_name);
+        if let Some(ref name) = method_name {
+            debug!("Processing request '{}'", name);
+        }
 
         let meta = Some(RunloopContext {
             id: None,
@@ -175,10 +184,12 @@ impl Middleware<Option<RunloopContext>> for SurfpoolMiddleware {
         Either::Left(Box::pin(next(request, meta).map(move |res| {
             if let Some(Response::Single(output)) = &res {
                 if let jsonrpc_core::Output::Failure(failure) = output {
-                    debug!(
-                        "RPC error for method '{}': code={:?}, message={}",
-                        method_name, failure.error.code, failure.error.message
-                    );
+                    if let Some(name) = method_name {
+                        debug!(
+                            "RPC error for method '{}': code={:?}, message={}",
+                            name, failure.error.code, failure.error.message
+                        );
+                    }
                 }
             }
             res
