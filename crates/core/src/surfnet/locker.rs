@@ -3005,7 +3005,7 @@ impl SurfnetSvmLocker {
         let result = if first_local_slot.is_some() && first_local_slot.unwrap() > *slot {
             match remote_ctx {
                 Some(remote_client) => Some(remote_client.get_block(slot, *config).await?),
-                None => return Err(SurfpoolError::slot_too_old(*slot)),
+                None => None,
             }
         } else {
             self.get_block_local(slot, config)?
