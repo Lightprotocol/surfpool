@@ -1231,6 +1231,22 @@ impl SurfnetSvm {
         }
     }
 
+    /// Loads a BPF program into LiteSVM's execution cache from raw bytes.
+    /// Unlike `set_account`, this registers the program so it can be invoked by transactions.
+    pub fn add_program(&mut self, program_id: &Pubkey, program_bytes: &[u8]) -> SurfpoolResult<()> {
+        self.inner.add_program(*program_id, program_bytes)
+    }
+
+    /// Loads a BPF program into LiteSVM's execution cache from a .so file.
+    /// Unlike `set_account`, this registers the program so it can be invoked by transactions.
+    pub fn add_program_from_file(
+        &mut self,
+        program_id: &Pubkey,
+        path: impl AsRef<std::path::Path>,
+    ) -> SurfpoolResult<()> {
+        self.inner.add_program_from_file(*program_id, path)
+    }
+
     /// Sets an account in the local SVM state and notifies listeners.
     ///
     /// # Arguments
@@ -1975,7 +1991,7 @@ impl SurfnetSvm {
                     previous_blockhash: previous_chain_tip.hash.clone(),
                     block_time: self.updated_at as i64 / 1_000,
                     block_height: self.chain_tip.index,
-                    parent_slot: slot,
+                    parent_slot: slot.saturating_sub(1),
                     signatures: confirmed_signatures,
                 },
             )?;
@@ -2599,7 +2615,7 @@ impl SurfnetSvm {
             signatures,
             rewards: if show_rewards { Some(vec![]) } else { None },
             num_reward_partitions: None,
-            block_time: Some(block.block_time / 1000),
+            block_time: Some(block.block_time),
             block_height: Some(block.block_height),
         };
         Ok(Some(block))

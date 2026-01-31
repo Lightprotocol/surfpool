@@ -240,6 +240,24 @@ impl SurfnetSvmLocker {
         });
         Ok(epoch_info)
     }
+
+    /// Loads a BPF program into LiteSVM's execution cache from raw bytes.
+    pub fn add_program(
+        &self,
+        program_id: &Pubkey,
+        program_bytes: &[u8],
+    ) -> SurfpoolResult<()> {
+        self.with_svm_writer(|svm| svm.add_program(program_id, program_bytes))
+    }
+
+    /// Loads a BPF program into LiteSVM's execution cache from a .so file.
+    pub fn add_program_from_file(
+        &self,
+        program_id: &Pubkey,
+        path: impl AsRef<std::path::Path> + Send + Sync,
+    ) -> SurfpoolResult<()> {
+        self.with_svm_writer(|svm| svm.add_program_from_file(program_id, path))
+    }
 }
 
 /// Functions for getting accounts from the underlying SurfnetSvm instance or remote client
@@ -619,7 +637,20 @@ impl SurfnetSvmLocker {
             let slot = svm.get_latest_absolute_slot();
 
             for (pubkey, account) in accounts_to_load {
-                if let Err(e) = svm.set_account(&pubkey, account.clone()) {
+                // Executable accounts owned by bpf_loader need to be loaded via add_program
+                // so they are registered in LiteSVM's execution cache and can be invoked.
+                let is_bpf_program = account.executable
+                    && account.owner == solana_sdk_ids::bpf_loader::id();
+
+                if is_bpf_program {
+                    if let Err(e) = svm.add_program(&pubkey, &account.data) {
+                        let _ = svm.simnet_events_tx.send(SimnetEvent::warn(format!(
+                            "Failed to load program '{}': {}",
+                            pubkey, e
+                        )));
+                        continue;
+                    }
+                } else if let Err(e) = svm.set_account(&pubkey, account.clone()) {
                     let _ = svm.simnet_events_tx.send(SimnetEvent::warn(format!(
                         "Failed to set account '{}': {}",
                         pubkey, e

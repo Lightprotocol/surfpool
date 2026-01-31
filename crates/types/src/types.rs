@@ -622,6 +622,8 @@ pub struct SimnetConfig {
     /// Snapshot accounts to preload at startup.
     /// Keys are pubkey strings, values can be None to fetch from remote RPC.
     pub snapshot: BTreeMap<String, Option<AccountSnapshot>>,
+    /// BPF programs to load at startup. Each entry is (program_id_string, path_to_so_file).
+    pub bpf_programs: Vec<(String, PathBuf)>,
 }
 
 impl Default for SimnetConfig {
@@ -641,6 +643,7 @@ impl Default for SimnetConfig {
             skip_signature_verification: false,
             surfnet_id: "default".to_string(),
             snapshot: BTreeMap::new(),
+            bpf_programs: Vec::new(),
         }
     }
 }

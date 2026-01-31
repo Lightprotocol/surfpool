@@ -4,6 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     path::PathBuf,
+    str::FromStr,
     sync::{Arc, RwLock},
     thread::{JoinHandle, sleep},
     time::{Duration, Instant},
@@ -110,6 +111,31 @@ pub async fn start_local_surfnet_runloop(
             simnet.log_bytes_limit,
         )
         .await?;
+
+    // Load BPF programs specified via --bpf-program
+    for (program_id_str, path) in &simnet.bpf_programs {
+        let program_id = solana_pubkey::Pubkey::from_str(program_id_str).map_err(|e| {
+            format!(
+                "Invalid program pubkey '{}': {}",
+                program_id_str, e
+            )
+        })?;
+        svm_locker.add_program_from_file(&program_id, path).map_err(|e| {
+            format!(
+                "Failed to load program '{}' from '{}': {}",
+                program_id_str,
+                path.display(),
+                e
+            )
+        })?;
+        let _ = svm_locker.with_svm_reader(|svm| {
+            svm.simnet_events_tx.send(SimnetEvent::info(format!(
+                "Loaded BPF program {} from {}",
+                program_id_str,
+                path.display()
+            )))
+        });
+    }
 
     svm_locker.airdrop_pubkeys(simnet.airdrop_token_amount, &simnet.airdrop_addresses);
 
