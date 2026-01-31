@@ -3005,7 +3005,29 @@ impl SurfnetSvmLocker {
         let result = if first_local_slot.is_some() && first_local_slot.unwrap() > *slot {
             match remote_ctx {
                 Some(remote_client) => Some(remote_client.get_block(slot, *config).await?),
-                None => None,
+                None => {
+                    // No remote RPC available -- return a reconstructed empty block
+                    // so callers (e.g. photon indexer calling getBlock(0)) get a valid
+                    // response instead of null / error.
+                    Some(self.with_svm_reader(|svm| {
+                        let block = svm.reconstruct_empty_block(*slot);
+                        UiConfirmedBlock {
+                            previous_blockhash: block.previous_blockhash,
+                            blockhash: block.hash,
+                            parent_slot: block.parent_slot,
+                            transactions: Some(vec![]),
+                            signatures: None,
+                            rewards: if config.rewards.unwrap_or(true) {
+                                Some(vec![])
+                            } else {
+                                None
+                            },
+                            num_reward_partitions: None,
+                            block_time: Some(block.block_time),
+                            block_height: Some(block.block_height),
+                        }
+                    }))
+                }
             }
         } else {
             self.get_block_local(slot, config)?
