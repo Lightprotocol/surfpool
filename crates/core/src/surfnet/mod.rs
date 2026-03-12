@@ -139,15 +139,6 @@ pub type SignatureSubscriptionData = (
 pub type AccountSubscriptionData =
     HashMap<Pubkey, Vec<(Option<UiAccountEncoding>, Sender<UiAccount>)>>;
 
-pub type ProgramSubscriptionData = HashMap<
-    Pubkey,
-    Vec<(
-        Option<UiAccountEncoding>,
-        Option<Vec<RpcFilterType>>,
-        Sender<RpcKeyedAccount>,
-    )>,
->;
-
 pub type LogsSubscriptionData = (
     CommitmentLevel,
     RpcTransactionLogsFilter,

@@ -16,6 +16,7 @@ use notify::{
     Config, Event, EventKind, RecursiveMode, Result as NotifyResult, Watcher,
     event::{CreateKind, DataChange, ModifyKind},
 };
+#[cfg(feature = "version_check")]
 use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
 use solana_signer::Signer;
@@ -42,6 +43,7 @@ use crate::{
     tui::{self, simnet::DisplayedUrl},
 };
 
+#[cfg(feature = "version_check")]
 #[derive(Debug, Serialize, Deserialize)]
 struct CheckVersionResponse {
     pub latest: String,
@@ -122,7 +124,11 @@ pub async fn handle_start_local_surfnet_command(
     for dir_path in &cmd.account_dirs {
         let dir = std::path::Path::new(dir_path);
         if !dir.is_dir() {
-            return Err(format!("Account directory '{}' does not exist or is not a directory", dir_path).into());
+            return Err(format!(
+                "Account directory '{}' does not exist or is not a directory",
+                dir_path
+            )
+            .into());
         }
         let entries = std::fs::read_dir(dir)
             .map_err(|e| format!("Failed to read account directory '{}': {}", dir_path, e))?;
@@ -154,8 +160,7 @@ pub async fn handle_start_local_surfnet_command(
         let file_path = &chunk[1];
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| format!("Failed to read account file '{}': {}", file_path, e))?;
-        let (json_pubkey, account_snapshot) =
-            parse_solana_account_json(&content, file_path)?;
+        let (json_pubkey, account_snapshot) = parse_solana_account_json(&content, file_path)?;
         if json_pubkey != *address {
             let _ = simnet_events_tx.send(SimnetEvent::warn(format!(
                 "Account file '{}' contains pubkey '{}' but CLI address '{}' will be used",
@@ -780,21 +785,18 @@ fn parse_solana_account_json(
     content: &str,
     file_path: &str,
 ) -> Result<(String, surfpool_types::AccountSnapshot), String> {
-    let json: serde_json::Value = serde_json::from_str(content).map_err(|e| {
-        format!("Failed to parse account JSON '{}': {}", file_path, e)
-    })?;
+    let json: serde_json::Value = serde_json::from_str(content)
+        .map_err(|e| format!("Failed to parse account JSON '{}': {}", file_path, e))?;
 
     let pubkey = json["pubkey"]
         .as_str()
-        .ok_or_else(|| {
-            format!("Missing 'pubkey' field in account file '{}'", file_path)
-        })?
+        .ok_or_else(|| format!("Missing 'pubkey' field in account file '{}'", file_path))?
         .to_string();
 
     let account = &json["account"];
-    let lamports = account["lamports"].as_u64().ok_or_else(|| {
-        format!("Missing 'account.lamports' in '{}'", file_path)
-    })?;
+    let lamports = account["lamports"]
+        .as_u64()
+        .ok_or_else(|| format!("Missing 'account.lamports' in '{}'", file_path))?;
     let owner = account["owner"]
         .as_str()
         .ok_or_else(|| format!("Missing 'account.owner' in '{}'", file_path))?
@@ -806,9 +808,9 @@ fn parse_solana_account_json(
     let data_array = account["data"]
         .as_array()
         .ok_or_else(|| format!("Missing 'account.data' array in '{}'", file_path))?;
-    let data_base64 = data_array[0].as_str().ok_or_else(|| {
-        format!("Invalid 'account.data[0]' in '{}'", file_path)
-    })?;
+    let data_base64 = data_array[0]
+        .as_str()
+        .ok_or_else(|| format!("Invalid 'account.data[0]' in '{}'", file_path))?;
 
     Ok((
         pubkey,

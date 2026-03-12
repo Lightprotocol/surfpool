@@ -1626,9 +1626,7 @@ impl Rpc for SurfpoolWsRpc {
                     data: None,
                 };
                 if subscriber.reject(error.clone()).is_err() {
-                    log::error!(
-                        "Failed to reject subscriber for invalid program pubkey format."
-                    );
+                    log::error!("Failed to reject subscriber for invalid program pubkey format.");
                 }
                 return;
             }
@@ -1667,11 +1665,7 @@ impl Rpc for SurfpoolWsRpc {
         let slot = svm_locker.with_svm_reader(|svm| svm.get_latest_absolute_slot());
 
         let filters = config.filters.unwrap_or_default();
-        let rx = svm_locker.subscribe_for_program_updates(
-            &program_id,
-            filters,
-            config.encoding,
-        );
+        let rx = svm_locker.subscribe_for_program_updates(&program_id, filters, config.encoding);
 
         self.tokio_handle.spawn(async move {
             if let Ok(mut guard) = program_active.write() {

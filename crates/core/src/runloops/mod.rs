@@ -114,12 +114,8 @@ pub async fn start_local_surfnet_runloop(
 
     // Load BPF programs specified via --bpf-program
     for (program_id_str, path) in &simnet.bpf_programs {
-        let program_id = solana_pubkey::Pubkey::from_str(program_id_str).map_err(|e| {
-            format!(
-                "Invalid program pubkey '{}': {}",
-                program_id_str, e
-            )
-        })?;
+        let program_id = solana_pubkey::Pubkey::from_str(program_id_str)
+            .map_err(|e| format!("Invalid program pubkey '{}': {}", program_id_str, e))?;
         match svm_locker.add_program_from_file(&program_id, path) {
             Ok(()) => {
                 let _ = svm_locker.with_svm_reader(|svm| {
@@ -173,9 +169,8 @@ pub async fn start_local_surfnet_runloop(
     // Uses add_program_from_file for execution cache, then creates a mock
     // programdata account with the upgrade authority (same pattern as light-program-test).
     for (program_id_str, path, upgrade_authority_str) in &simnet.upgradeable_programs {
-        let program_id = solana_pubkey::Pubkey::from_str(program_id_str).map_err(|e| {
-            format!("Invalid program pubkey '{}': {}", program_id_str, e)
-        })?;
+        let program_id = solana_pubkey::Pubkey::from_str(program_id_str)
+            .map_err(|e| format!("Invalid program pubkey '{}': {}", program_id_str, e))?;
         let upgrade_authority =
             solana_pubkey::Pubkey::from_str(upgrade_authority_str).map_err(|e| {
                 format!(
@@ -198,8 +193,7 @@ pub async fn start_local_surfnet_runloop(
 
         // Create mock programdata account so programs can verify upgrade authority.
         // The programdata PDA is derived from the program ID.
-        let programdata_address =
-            solana_loader_v3_interface::get_program_data_address(&program_id);
+        let programdata_address = solana_loader_v3_interface::get_program_data_address(&program_id);
         let programdata_state =
             solana_loader_v3_interface::state::UpgradeableLoaderState::ProgramData {
                 slot: svm_locker.get_latest_absolute_slot(),

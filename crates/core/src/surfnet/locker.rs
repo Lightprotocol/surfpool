@@ -242,11 +242,7 @@ impl SurfnetSvmLocker {
     }
 
     /// Loads a BPF program into LiteSVM's execution cache from raw bytes.
-    pub fn add_program(
-        &self,
-        program_id: &Pubkey,
-        program_bytes: &[u8],
-    ) -> SurfpoolResult<()> {
+    pub fn add_program(&self, program_id: &Pubkey, program_bytes: &[u8]) -> SurfpoolResult<()> {
         self.with_svm_writer(|svm| svm.add_program(program_id, program_bytes))
     }
 
@@ -639,8 +635,8 @@ impl SurfnetSvmLocker {
             for (pubkey, account) in accounts_to_load {
                 // Executable accounts owned by bpf_loader need to be loaded via add_program
                 // so they are registered in LiteSVM's execution cache and can be invoked.
-                let is_bpf_program = account.executable
-                    && account.owner == solana_sdk_ids::bpf_loader::id();
+                let is_bpf_program =
+                    account.executable && account.owner == solana_sdk_ids::bpf_loader::id();
 
                 if is_bpf_program {
                     if let Err(e) = svm.add_program(&pubkey, &account.data) {
@@ -3080,6 +3076,18 @@ impl SurfnetSvmLocker {
         slot: &Slot,
         config: &RpcBlockConfig,
     ) -> SurfpoolContextualizedResult<Option<UiConfirmedBlock>> {
+        let committed_slot = self.get_slot_for_commitment(&config.commitment.unwrap_or_default());
+        if *slot > committed_slot {
+            return Ok(SvmAccessContext {
+                slot: committed_slot,
+                latest_epoch_info: self.get_epoch_info(),
+                latest_blockhash: self
+                    .get_latest_blockhash(&CommitmentConfig::processed())
+                    .unwrap_or_default(),
+                inner: None,
+            });
+        }
+
         let first_local_slot = self.get_first_local_slot();
 
         let result = if first_local_slot.is_some() && first_local_slot.unwrap() > *slot {
